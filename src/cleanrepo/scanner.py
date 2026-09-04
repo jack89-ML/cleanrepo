@@ -4,6 +4,7 @@ hit extraction with sanitized context."""
 from __future__ import annotations
 
 import fnmatch
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,6 +53,18 @@ def is_binary(data: bytes) -> bool:
     return _NULL_CHUNK in data[:8192]
 
 
+def should_skip_path(rel_path: str) -> bool:
+    """Shared skip predicate for directory/ext defaults (path scans, staged
+    payloads and history alike)."""
+    parts = rel_path.replace("\\", "/").split("/")
+    if any(part in DEFAULT_SKIP_DIRS or
+           fnmatch.fnmatch(part, "*.egg-info") for part in parts):
+        return True
+    suffix = "." + parts[-1].rsplit(".", 1)[-1].lower() if "." in parts[-1] \
+        else ""
+    return suffix in DEFAULT_SKIP_EXT
+
+
 def text_files(root: Path, ignore_paths: list[str] | None = None) -> list[Path]:
     """Text files under ``root`` honouring default + extra ignores."""
     ignore_paths = ignore_paths or []
@@ -60,12 +73,7 @@ def text_files(root: Path, ignore_paths: list[str] | None = None) -> list[Path]:
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
-        parts = rel.split("/")
-        if any(part in DEFAULT_SKIP_DIRS or
-               fnmatch.fnmatch(part, "*.egg-info")
-               for part in parts):
-            continue
-        if path.suffix.lower() in DEFAULT_SKIP_EXT:
+        if should_skip_path(rel):
             continue
         if any(fnmatch.fnmatch(rel, pattern) for pattern in ignore_paths):
             continue
@@ -104,7 +112,6 @@ def scan_text(content: str, path: str = "",
                                 context=context))
 
     lines = content.splitlines()
-    lowered_lines = [line.lower() for line in lines]
 
     for line_no, line in enumerate(lines, start=1):
         covered: list[tuple[int, int]] = []
@@ -129,13 +136,23 @@ def scan_text(content: str, path: str = "",
     for word in wordlist + rot13_words:
         if not word:
             continue
-        for line_no, lowered in enumerate(lowered_lines, start=1):
-            position = lowered.find(word)
-            if position >= 0:
-                push(line_no, "wordlist", f"blocked word '{word}'", "medium",
-                     "wordlist", word, _context(lines[line_no - 1],
-                                                position,
-                                                position + len(word)))
+        matcher = None
+        if len(word) >= 3 and re.fullmatch(r"[A-Za-z0-9]+", word):
+            matcher = re.compile(rf"\b{re.escape(word)}\b", re.IGNORECASE)
+        else:
+            needle = word.lower()
+        for line_no, line in enumerate(lines, start=1):
+            if matcher is not None:
+                position = matcher.search(line)
+                if position is None:
+                    continue
+                start = position.start()
+            else:
+                start = line.lower().find(needle)
+                if start < 0:
+                    continue
+            push(line_no, "wordlist", f"blocked word '{word}'", "medium",
+                 "wordlist", word, _context(line, start, start + len(word)))
     return findings
 
 

@@ -76,6 +76,28 @@ class GitOpsTest(unittest.TestCase):
         self.assertTrue(git_ops.uninstall_hook(self.root))
         self.assertFalse(hook.exists())
 
+    def test_uninstall_refuses_foreign_hook(self):
+        foreign = self.root / ".git" / "hooks"
+        foreign.mkdir(parents=True, exist_ok=True)
+        hook = foreign / "pre-commit"
+        hook.write_text("#!/bin/sh\necho user hook\n", encoding="utf-8")
+        with self.assertRaises(CleanrepoError):
+            git_ops.uninstall_hook(self.root)
+        self.assertTrue(hook.exists())  # foreign hook left untouched
+
+    def test_staged_payloads_skip_dummy_and_binary(self):
+        dummy = self.root / "dummy"
+        dummy.mkdir()
+        (dummy / "fake.txt").write_text(f"{self.AWS}\n")
+        (self.root / "logo.png").write_bytes(b"\x89PNG\r\n\x00binary")
+        (self.root / "real.py").write_text("print('ok')\n")
+        _git(self.root, "add", "-A")
+        payloads = git_ops.staged_payloads(self.root)
+        names = [name for name, _ in payloads]
+        self.assertIn("real.py", names)
+        self.assertNotIn("logo.png", names)
+        self.assertNotIn("dummy/fake.txt", names)
+
 
 if __name__ == "__main__":
     unittest.main()

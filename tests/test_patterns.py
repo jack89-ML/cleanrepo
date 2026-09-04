@@ -31,6 +31,29 @@ class SecretPatternsTest(unittest.TestCase):
         matches = [f.match for f in findings if f.rule == "local-home-path"]
         self.assertTrue(any("C:\\Users\\alice" in m for m in matches))
 
+    def test_local_home_path_inline_delimiters(self):
+        home = "/home/"
+        user = "alice"
+        cases = [
+            home + user + "/project",
+            "'C:\\" + "Users\\bob\\secret'",
+            "export DIR=/" + "Users/charlie/docs",
+        ]
+        for case in cases:
+            findings = scan_text(case + "\n")
+            self.assertTrue(
+                any(f.rule == "local-home-path" for f in findings),
+                f"not detected: {case}")
+
+    def test_wordlist_word_boundaries(self):
+        # substring inside a longer alnum word must not trigger
+        findings = scan_text("omegaprod ready; projectomega shipped\n",
+                             wordlist=["omega"])
+        self.assertEqual(findings, [])
+        hit = scan_text("project omega shipped\n", wordlist=["omega"])
+        self.assertEqual(len(hit), 1)
+        self.assertEqual(hit[0].rule, "wordlist")
+
     def test_private_ips_detected(self):
         findings = scan_text(_dummy("private_ips.txt"))
         rules = {f.rule for f in findings}

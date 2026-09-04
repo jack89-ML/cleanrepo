@@ -74,8 +74,10 @@ def builtin_rules() -> list[Rule]:
                  r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE "
                  r"KEY(?: BLOCK)?-----"),
         _compile("local-home-path", "local absolute home path", "medium",
-                 "path", r"(?i)\b(?:/home/|/Users/|C:\\Users\\)"
-                         r"[A-Za-z0-9._-]+[/\\]"),
+                 "path",
+                 r"(?i)(?:(?<=[\s\"'=(])|^|(?<=\b))"
+                 r"(?:/(?:home|Users)/|[a-zA-Z]:[/\\]Users[/\\])"
+                 r"[A-Za-z0-9._-]+[/\\]"),
         _compile("private-ip", "RFC 1918 private IPv4 address", "low",
                  "network",
                  r"\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"

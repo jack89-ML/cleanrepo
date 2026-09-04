@@ -9,6 +9,7 @@ import subprocess
 from pathlib import Path
 
 from .errors import CleanrepoError
+from .scanner import is_binary, should_skip_path
 
 HOOK_SKELETON = """#!/bin/sh
 # cleanrepo pre-commit hook (installed by `cleanrepo hook install`).
@@ -51,8 +52,12 @@ def staged_payloads(root: Path) -> list[tuple[str, bytes]]:
              completed.stdout.decode(errors="replace").split("\x00") if name]
     payloads: list[tuple[str, bytes]] = []
     for name in names:
+        if should_skip_path(name):
+            continue
         blob = _run(["git", "-C", str(root), "show", f":{name}"])
         if blob.returncode != 0:
+            continue
+        if is_binary(blob.stdout):
             continue
         payloads.append((name, blob.stdout))
     return payloads
@@ -71,27 +76,32 @@ def history_payloads(root: Path, limit_commits: int = 0) -> list[tuple[str, str]
     if limit_commits:
         shas = shas[:limit_commits]
     payloads: list[tuple[str, str]] = []
+    current_file = "?"
+    added: list[str] = []
+
+    def flush() -> None:
+        if added and current_file != "?" and \
+                not should_skip_path(current_file):
+            payloads.append((f"{sha[:8]}:{current_file}", "\n".join(added)))
+        added.clear()
+
     for sha in shas:
         patch = _run(["git", "-C", str(root), "show", "--format=",
                       "--no-ext-diff", "--no-renames", sha])
         if patch.returncode != 0:
             continue
         current_file = "?"
-        added: list[str] = []
+        added.clear()
         for raw in patch.stdout.decode(errors="replace").splitlines():
             if raw.startswith("diff --git "):
-                if added:
-                    payloads.append((f"{sha[:8]}:{current_file}",
-                                     "\n".join(added)))
-                added = []
+                flush()
                 parts = raw.split(" b/", 1)
                 current_file = parts[1] if len(parts) > 1 else "?"
             elif raw.startswith("+++"):
                 continue
             elif raw.startswith("+"):
                 added.append(raw[1:])
-        if added:
-            payloads.append((f"{sha[:8]}:{current_file}", "\n".join(added)))
+        flush()
     return payloads
 
 
@@ -110,10 +120,13 @@ def install_hook(root: Path) -> Path:
 def uninstall_hook(root: Path) -> bool:
     git_dir = root / ".git"
     hook = git_dir / "hooks" / "pre-commit"
-    if hook.exists():
-        hook.unlink()
-        return True
-    return False
+    if not hook.exists():
+        return False
+    if not is_cleanrepo_hook(hook):
+        raise CleanrepoError(
+            "existing hook was not installed by cleanrepo")
+    hook.unlink()
+    return True
 
 
 def is_cleanrepo_hook(hook: Path) -> bool:
