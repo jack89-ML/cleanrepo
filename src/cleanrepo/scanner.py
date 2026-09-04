@@ -22,6 +22,7 @@ DEFAULT_SKIP_EXT = {
     ".mov", ".exe", ".dll", ".so", ".dylib", ".a", ".o", ".class",
 }
 _NULL_CHUNK = b"\x00"
+CLEANREPO_IGNORE = ".cleanrepoignore"
 
 
 @dataclass
@@ -53,6 +54,44 @@ def is_binary(data: bytes) -> bool:
     return _NULL_CHUNK in data[:8192]
 
 
+def load_ignore_patterns(path) -> list[str]:
+    """Parse a gitignore-style ignore file.
+
+    Blank lines and ``#`` comments are skipped. A trailing ``/`` marks a
+    directory pattern; patterns without a ``/`` are matched against the
+    basename at any depth (gitignore semantics approximated with fnmatch).
+    """
+    patterns: list[str] = []
+    if path is None or not Path(path).is_file():
+        return patterns
+    for raw in Path(path).read_text(encoding="utf-8",
+                                    errors="replace").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("!"):
+            continue  # negation unsupported: ignored silently
+        pattern = line.lstrip("/")
+        if pattern.endswith("/"):
+            pattern = pattern + "**"
+        elif "/" not in pattern:
+            pattern = "**/" + pattern
+        patterns.append(pattern)
+    return patterns
+
+
+def matches_ignore(rel_path: str, patterns: list[str]) -> bool:
+    """True when a relative path matches any ignore pattern."""
+    basename = rel_path.rsplit("/", 1)[-1]
+    for pattern in patterns:
+        if fnmatch.fnmatch(rel_path, pattern):
+            return True
+        simple = pattern[3:] if pattern.startswith("**/") else pattern
+        if "/" not in simple and fnmatch.fnmatch(basename, simple):
+            return True
+    return False
+
+
 def should_skip_path(rel_path: str) -> bool:
     """Shared skip predicate for directory/ext defaults (path scans, staged
     payloads and history alike)."""
@@ -73,9 +112,11 @@ def text_files(root: Path, ignore_paths: list[str] | None = None) -> list[Path]:
         if not path.is_file():
             continue
         rel = path.relative_to(root).as_posix()
+        if path.name == CLEANREPO_IGNORE:
+            continue
         if should_skip_path(rel):
             continue
-        if any(fnmatch.fnmatch(rel, pattern) for pattern in ignore_paths):
+        if matches_ignore(rel, ignore_paths):
             continue
         try:
             probe = path.read_bytes()

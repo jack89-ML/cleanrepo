@@ -137,5 +137,69 @@ class HookCliTest(unittest.TestCase):
         self.assertFalse(hook.exists())
 
 
+class IgnoreFileTest(unittest.TestCase):
+    """.cleanrepoignore auto-discovery and --ignore-file behaviour."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def write(self, name: str, content: str) -> Path:
+        path = self.root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_auto_ignore_file_excludes_patterns(self):
+        self.write(".cleanrepoignore", "# comment\naws_dummy_*.txt\n")
+        self.write("aws_dummy_1.txt", f"{AWS}\n")
+        self.write("keep.txt", f"{AWS}\n")
+        result = _run("scan", str(self.root), "--json", cwd=self.root)
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        paths = [f["path"] for f in payload["findings"]]
+        self.assertEqual(paths, ["keep.txt"])
+
+    def test_dir_glob_excludes_nested(self):
+        self.write(".cleanrepoignore", "fixtures/\n")
+        self.write("fixtures/secret.txt", f"{AWS}\n")
+        self.write("src/app.py", "print('ok')\n")
+        result = _run("scan", str(self.root), "--json", cwd=self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["findings_count"], 0)
+
+    def test_explicit_ignore_file_flag(self):
+        alt = self.root / "rules.ignore"
+        alt.write_text("token_*.txt\n", encoding="utf-8")
+        self.write("token_a.txt", f"{AWS}\n")
+        result = _run("scan", str(self.root), "--json",
+                      "--ignore-file", str(alt), cwd=self.root)
+        self.assertEqual(result.returncode, 0)
+
+    def test_missing_ignore_file_exits_two(self):
+        result = _run("scan", str(self.root),
+                      "--ignore-file", str(self.root / "absent.ignore"),
+                      cwd=self.root)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("ignore file not found", result.stderr)
+
+    def test_staged_respects_auto_ignore(self):
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.root,
+                       check=True)
+        subprocess.run(["git", "config", "user.email", "t@example.com"],
+                       cwd=self.root, check=True)
+        subprocess.run(["git", "config", "user.name", "T"],
+                       cwd=self.root, check=True)
+        self.write(".cleanrepoignore", "gen_*.py\n")
+        self.write("gen_key.py", f"KEY = '{AWS}'\n")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        result = _run("scan", "--staged", "--json", cwd=self.root)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)["findings_count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

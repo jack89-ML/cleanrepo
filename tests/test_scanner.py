@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from cleanrepo import scanner
-
 DUMMY = Path(__file__).parent / "dummy"
 AWS = (DUMMY / "aws.txt").read_text(encoding="utf-8").splitlines()[0].split(" = ", 1)[1].strip()
 HEX1 = (DUMMY / "high_entropy.txt").read_text(encoding="utf-8").splitlines()[0]

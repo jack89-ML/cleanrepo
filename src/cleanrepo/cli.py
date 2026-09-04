@@ -18,11 +18,33 @@ from .git_ops import (git_root, history_payloads, install_hook, staged_payloads,
                       uninstall_hook)
 from .output import render_json, render_sarif, render_table
 from .patterns import load_plain_wordlist, load_rot13_wordlist
-from .scanner import scan_text, text_files
+from .scanner import (CLEANREPO_IGNORE, load_ignore_patterns, matches_ignore,
+                      scan_text, text_files)
 
 
 def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
+
+
+def _collect_ignores(args) -> list[str]:
+    """Auto .cleanrepoignore in the scan root, merged with --ignore-file."""
+    patterns: list[str] = []
+    root = Path(args.path)
+    if args.staged or args.history:
+        base = git_root(root if root.is_dir() else None)
+    elif root.is_dir():
+        base = root
+    else:
+        base = root.parent
+    auto = base / CLEANREPO_IGNORE
+    if auto.is_file():
+        patterns.extend(load_ignore_patterns(auto))
+    if args.ignore_file:
+        explicit = Path(args.ignore_file)
+        if not explicit.is_file():
+            raise CleanrepoError(f"ignore file not found: {explicit}")
+        patterns.extend(load_ignore_patterns(explicit))
+    return patterns
 
 
 def _collect_findings(args):
@@ -31,24 +53,33 @@ def _collect_findings(args):
                    if args.rot13_list else [])
     wordlist = (load_plain_wordlist(Path(args.wordlist))
                 if args.wordlist else [])
+    ignore_patterns = _collect_ignores(args)
 
     if args.staged:
         if args.history:
             raise CleanrepoError("choose either --staged or --history, not both")
         repo = git_root(root_arg if root_arg.is_dir() else None)
-        payloads = staged_payloads(repo)
+        payloads = [(name, content) for name, content in staged_payloads(repo)
+                    if not matches_ignore(name, ignore_patterns)]
         sources = [(name, _decode(content)) for name, content in payloads]
     elif args.history:
         repo = git_root(root_arg if root_arg.is_dir() else None)
-        sources = history_payloads(repo)
+        sources = [(label, text)
+                   for label, text in history_payloads(repo)
+                   if not matches_ignore(label.split(":", 1)[-1],
+                                         ignore_patterns)]
     else:
         if not root_arg.exists():
             raise CleanrepoError(f"path not found: {args.path}")
         if root_arg.is_file():
-            sources = [(root_arg.name,
-                        _decode(root_arg.read_bytes()))]
+            name = root_arg.name
+            if matches_ignore(name, ignore_patterns):
+                sources = []
+            else:
+                sources = [(name, _decode(root_arg.read_bytes()))]
         else:
-            files = text_files(root_arg, ignore_paths=args.ignore_paths)
+            files = text_files(root_arg, ignore_paths=args.ignore_paths +
+                               ignore_patterns)
             sources = [(str(path.relative_to(root_arg)),
                         _decode(path.read_bytes()))
                        for path in files]
@@ -126,6 +157,10 @@ def _parser() -> argparse.ArgumentParser:
     scan.add_argument("--ignore-paths", action="append", default=[],
                       metavar="GLOB",
                       help="additional glob patterns to skip (repeatable)")
+    scan.add_argument("--ignore-file", default=None,
+                      metavar="PATH",
+                      help="explicit gitignore-style file (merged with an "
+                           "auto .cleanrepoignore in the scan root)")
     fmt = scan.add_mutually_exclusive_group()
     fmt.add_argument("--json", action="store_true",
                      help="pure JSON on stdout")
