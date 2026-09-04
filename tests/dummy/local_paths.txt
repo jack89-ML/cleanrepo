@@ -1,0 +1,3 @@
+config at /home/alice/.config/tool.ini
+windows path C:\Users\alice\AppData\Local\tool
+mac path /Users/alice/Library/Application Support

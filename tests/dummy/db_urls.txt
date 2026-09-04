@@ -1,0 +1,2 @@
+postgres://dbuser:supersecret123@db.internal.example:5432/appdb
+mysql://root:rootpassword1@db.internal.example:3306/app

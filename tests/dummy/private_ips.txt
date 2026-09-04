@@ -1,0 +1,4 @@
+application server 10.0.0.5
+database replica 192.168.1.10
+vpn gateway 172.16.5.4
+backup host 172.31.255.254

@@ -1,0 +1,4 @@
+# blocked terms, ROT13-encoded (decode with `cleanrepo` rot13 helper)
+cebwrpg-bzrtn
+pyvrag-ngynf
+oynpxobk-nycun
